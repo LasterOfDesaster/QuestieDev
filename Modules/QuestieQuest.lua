@@ -15,6 +15,7 @@ function QuestieQuest:Initialize()
     --GetQuestsCompleted(Questie.db.char.complete)
     Questie.db.char.complete = GetQuestsCompleted()
     QuestieProfessions:Update()
+    QuestieReputation:Update()
 
     -- this inserts the Questie Icons to the MinimapButtonBag ignore list
     if MBB_Ignore then
@@ -44,7 +45,9 @@ function QuestieQuest:ToggleNotes(desiredValue)
         return -- we already have the desired state
     end
     if QuestieQuest.NotesHidden then
+        -- change map button
         Questie_Toggle:SetText(QuestieLocale:GetUIString('QUESTIE_MAP_BUTTON_HIDE'));
+        -- show quest notes
         for questId, framelist in pairs(QuestieMap.questIdFrames) do
             for index, frameName in ipairs(framelist) do -- this may seem a bit expensive, but its actually really fast due to the order things are checked
                 local icon = _G[frameName];
@@ -57,8 +60,20 @@ function QuestieQuest:ToggleNotes(desiredValue)
                 end
             end
         end
+        -- show manual notes
+        -- TODO probably this whole function should be moved to QuestieMap, now that it handles manualFrames
+        for _, frameList in pairs(QuestieMap.manualFrames) do
+            for _, frameName in pairs(frameList) do
+                local icon = _G[frameName];
+                if icon ~= nil and icon.IsShown ~= nil and (not icon.hidden) then -- check for function to make sure its a frame
+                    icon:FakeUnide()
+                end
+            end
+        end
     else
+        -- change map button
         Questie_Toggle:SetText(QuestieLocale:GetUIString('QUESTIE_MAP_BUTTON_SHOW'));
+        -- hide quest notes
         for questId, framelist in pairs(QuestieMap.questIdFrames) do
             for index, frameName in ipairs(framelist) do -- this may seem a bit expensive, but its actually really fast due to the order things are checked
                 local icon = _G[frameName];
@@ -67,7 +82,17 @@ function QuestieQuest:ToggleNotes(desiredValue)
                 end
             end
         end
+        -- hide manual notes
+        for _, frameList in pairs(QuestieMap.manualFrames) do
+            for _, frameName in pairs(frameList) do
+                local icon = _G[frameName];
+                if icon ~= nil and icon.IsShown ~= nil and (not icon.hidden) then -- check for function to make sure its a frame
+                    icon:FakeHide()
+                end
+            end
+        end
     end
+    -- update config
     QuestieQuest.NotesHidden = not QuestieQuest.NotesHidden
     Questie.db.char.enabled = not QuestieQuest.NotesHidden
 end
@@ -139,12 +164,14 @@ function QuestieQuest:Reset()
     -- make sure complete db is correct
     Questie.db.char.complete = GetQuestsCompleted()
     QuestieProfessions:Update()
+    QuestieReputation:Update()
 
     QuestieQuest:AddAllNotes()
 end
 
 function QuestieQuest:SmoothReset() -- use timers to reset progressively instead of all at once
     -- bit of a hack (there has to be a better way to do logic like this
+    QuestieDBMIntegration:ClearAll()
     local stepTable = {
         QuestieQuest.ClearAllNotes,
         function()
@@ -155,6 +182,7 @@ function QuestieQuest:SmoothReset() -- use timers to reset progressively instead
             -- make sure complete db is correct
             Questie.db.char.complete = GetQuestsCompleted()
             QuestieProfessions:Update()
+            QuestieReputation:Update()
             QuestieQuest.availableQuests = {} -- reset available quest db
 
             -- draw available quests
@@ -185,6 +213,7 @@ function QuestieQuest:UpdateHiddenNotes()
         QuestieQuest:DrawAllAvailableQuests();
     end
 
+    -- Update hidden status of quest notes
     for questId, framelist in pairs(QuestieMap.questIdFrames) do
         for index, frameName in ipairs(framelist) do -- this may seem a bit expensive, but its actually really fast due to the order things are checked
             local icon = _G[frameName];
@@ -198,7 +227,7 @@ function QuestieQuest:UpdateHiddenNotes()
                 else
                     icon:FakeUnhide()
                 end
-                if icon.data.QuestData.FadeIcons or (icon.data.ObjectiveData and icon.data.ObjectiveData.FadeIcons) then
+                if (icon.data.QuestData.FadeIcons or (icon.data.ObjectiveData and icon.data.ObjectiveData.FadeIcons)) and icon.data.Type ~= "complete" then
                     icon:FadeOut()
                 else
                     icon:FadeIn()
@@ -206,8 +235,23 @@ function QuestieQuest:UpdateHiddenNotes()
             end
         end
     end
-    -- hack to hide already-added notes of unwanted type
-
+    -- Update hidden status of manual notes
+    -- TODO maybe move the function to QuestieMap?
+    for id, frameList in pairs(QuestieMap.manualFrames) do
+        for _, frameName in ipairs(frameList) do
+            local icon = _G[frameName]
+            if icon ~= nil and icon.data then
+                if  QuestieQuest.NotesHidden or
+                    ((not Questie.db.global.enableMapIcons) and (not icon.miniMapIcon)) or
+                    ((not Questie.db.global.enableMiniMapIcons) and (icon.miniMapIcon))
+                then
+                    icon:FakeHide()
+                else
+                    icon:FakeUnhide()
+                end 
+            end
+        end
+    end
 end
 
 function QuestieQuest:HideQuest(id)
@@ -899,7 +943,7 @@ function QuestieQuest:GetAllQuestObjectives(Quest)
                     return {self.Collected, self.Needed, self.Completed} -- updated too recently
                 end
                 self._lastUpdate = now
-                
+
                 -- Use different variable names from above to avoid confusion.
                 local qObjectives = QuestieQuest:GetAllLeaderBoardDetails(self.QuestId);
 
@@ -957,7 +1001,7 @@ function QuestieQuest:GetAllQuestObjectives(Quest)
 
                         local correctObjective = false;
                         if(oName and oDesc) then
-                            -- Does regular ch  eck work good? or Regex mayhaps?
+                            -- Does regular check work good? or Regex mayhaps?
                             if((oName == oDesc) or strfind(oDesc, oName, 1, true)) then
                                 correctObjective = true;
                             elseif(oText == oDesc or strfind(oDesc, oName, 1, true)) then
@@ -967,7 +1011,7 @@ function QuestieQuest:GetAllQuestObjectives(Quest)
                             correctObjective = true;
                         end
 
-                        --Is this objective the same as the object description
+                        -- Is this objective the same as the object description
                         if(correctObjective) then
                             Quest.Objectives[objectiveIndex].Id = objectiveDB.Id;
                             Quest.Objectives[objectiveIndex].Coordinates = objectiveDB.Coordinates;
@@ -979,7 +1023,7 @@ function QuestieQuest:GetAllQuestObjectives(Quest)
                 end
             end
         end
-        
+
         if (not Quest.Objectives[objectiveIndex]) or (not Quest.Objectives[objectiveIndex].Id) then
             Questie:Debug(DEBUG_SPAM, "[QuestieQuest]: ".. QuestieLocale:GetUIString('DEBUG_ENTRY_ID', objective.type, objective.text))
         end
@@ -1130,7 +1174,7 @@ function QuestieQuest:GetAllLeaderBoardDetails(questId)
             local text = string.match(objective.text, "(.*)[：,:]");
             -- If nothing is matched, we should just add the text as is.
             if(text ~= nil) then
-                objective.text = text;
+                objective.text = string.trim(text);
             end
         else
             DEFAULT_CHAT_FRAME:AddMessage("ERROR! Something went wrong in GetAllLeaderBoardDetails"..tostring(questId).." - "..tostring(objective.text));
@@ -1265,7 +1309,7 @@ function QuestieQuest:DrawAllAvailableQuests()--All quests between
     Questie:Debug(DEBUG_INFO, "[QuestieQuest]", QuestieLocale:GetUIString('DEBUG_DRAW', count, QuestiePlayer:GetPlayerLevel()));
 end
 
-function _QuestieQuest:IsDoable(questObject) -- we need to add reputation checks here
+function _QuestieQuest:IsDoable(questObject)
     if not questObject then
         return false;
     end
@@ -1309,6 +1353,10 @@ function _QuestieQuest:IsDoable(questObject) -- we need to add reputation checks
     end
 
     if QuestieProfessions:HasProfessionAndSkill(questObject.requiredSkill) == false then
+        return false
+    end
+
+    if QuestieProfessions:HasReputation(questObject.requiredMinRep) == false then
         return false
     end
 
